@@ -1,131 +1,80 @@
 package main
 
 import (
-	"crypto/x509"
+	"encoding/json"
+
 	"fmt"
-	"github.com/hyperledger/fabric-gateway/pkg/client"
-	"github.com/hyperledger/fabric-gateway/pkg/identity"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"log"
 	"os"
-	"path"
-	"time"
-	"encoding/json"
+	"path/filepath"
+
+	"github.com/hyperledger/fabric-sdk-go/pkg/core/config"
+	"github.com/hyperledger/fabric-sdk-go/pkg/gateway"
 )
 
 type Loan struct {
-	LoanID        string    `json:"loanID"`
-	ApplicantName string    `json:"applicantName"`
-	LoanAmount    float64   `json:"loanAmount"`
-	TermMonths    int       `json:"termMonths"`
-	InterestRate  float64   `json:"interestRate"`
-	Outstanding   float64   `json:"outstanding"`
-	Status        string    `json:"status"`
-	Repayments    []float64 `json:"repayments"`
-}
-
-const (
-	channelName   = "mychannel"
-	chaincodeName = "loan"
-	mspID         = "Org1MSP"
-	cryptoPath    = "/workspaces/npci-blockchain-playgroundchallenge-3-harancho/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com"
-	certPath      = cryptoPath + "/users/User1@org1.example.com/msp/signcerts/cert.pem"
-	keyPath       = cryptoPath + "/users/User1@org1.example.com/msp/keystore/"
-	tlsCertPath   = cryptoPath + "/peers/peer0.org1.example.com/tls/ca.crt"
-	peerEndpoint  = "localhost:7051"
-	gatewayPeer   = "peer0.org1.example.com"
-)
-
-// newIdentity creates a client identity for this Gateway connection using an X.509 certificate.
-func newIdentity() *identity.X509Identity {
-	certificate, err := loadCertificate(certPath)
-	if err != nil {
-		panic(err)
-	}
-
-	id, err := identity.NewX509Identity(mspID, certificate)
-	if err != nil {
-		panic(err)
-	}
-
-	return id
-}
-
-func loadCertificate(filename string) (*x509.Certificate, error) {
-	certificatePEM, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read certificate file: %w", err)
-	}
-	return identity.CertificateFromPEM(certificatePEM)
-}
-
-// newSign creates a function that generates a digital signature from a message digest using a private key.
-func newSign() identity.Sign {
-	files, err := os.ReadDir(keyPath)
-	if err != nil {
-		panic(fmt.Errorf("failed to read private key directory: %w", err))
-	}
-	privateKeyPEM, err := os.ReadFile(path.Join(keyPath, files[0].Name()))
-
-	if err != nil {
-		panic(fmt.Errorf("failed to read private key file: %w", err))
-	}
-
-	privateKey, err := identity.PrivateKeyFromPEM(privateKeyPEM)
-	if err != nil {
-		panic(err)
-	}
-
-	sign, err := identity.NewPrivateKeySign(privateKey)
-	if err != nil {
-		panic(err)
-	}
-
-	return sign
-}
-
-// newGrpcConnection creates a gRPC connection to the Gateway server.
-func newGrpcConnection() *grpc.ClientConn {
-	certificate, err := loadCertificate(tlsCertPath)
-	if err != nil {
-		panic(err)
-	}
-
-	certPool := x509.NewCertPool()
-	certPool.AddCert(certificate)
-	transportCredentials := credentials.NewClientTLSFromCert(certPool, gatewayPeer)
-
-	connection, err := grpc.Dial(peerEndpoint, grpc.WithTransportCredentials(transportCredentials))
-	if err != nil {
-		panic(fmt.Errorf("failed to create gRPC connection: %w", err))
-	}
-
-	return connection
+	LoanID        string
+	ApplicantName string
+	LoanAmount    float64
+	TermMonths    int
+	InterestRate  float64
+	Outstanding   float64
+	Status        string
+	Repayments    []float64
 }
 
 func main() {
-	clientConnection := newGrpcConnection()
-	defer clientConnection.Close()
+	err := os.Setenv("DISCOVERY_AS_LOCALHOST", "true")
+	if err != nil {
+		log.Fatalf("Error setting DISCOVERY_AS_LOCALHOST environment variable: %v", err)
+	}
 
-	id := newIdentity()
-	sign := newSign()
+	wallet, err := gateway.NewFileSystemWallet("wallet")
+	if err != nil {
+		log.Fatalf("Failed to create wallet: %v", err)
+	}
 
-	gateway, err := client.Connect(
-		id,
-		client.WithSign(sign),
-		client.WithClientConnection(clientConnection),
-		client.WithEvaluateTimeout(5*time.Second),
-		client.WithEndorseTimeout(15*time.Second),
-		client.WithSubmitTimeout(5*time.Second),
-		client.WithCommitStatusTimeout(1*time.Minute),
+	if !wallet.Exists("appUser") {
+		err = populateWallet(wallet)
+		if err != nil {
+			log.Fatalf("Failed to populate wallet contents: %v", err)
+		}
+	}
+
+	ccpPath := filepath.Join(
+		"..",
+		"fabric-samples",
+		"test-network",
+		"organizations",
+		"peerOrganizations",
+		"org1.example.com",
+		"connection-org1.yaml",
+	)
+
+	gw, err := gateway.Connect(
+		gateway.WithConfig(config.FromFile(filepath.Clean(ccpPath))),
+		gateway.WithIdentity(wallet, "appUser"),
 	)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Failed to connect to gateway: %v", err)
 	}
-	defer gateway.Close()
+	defer gw.Close()
 
-	network := gateway.GetNetwork(channelName)
+    channelName := "mychannel"
+    if cname := os.Getenv("CHANNEL_NAME"); cname != "" {
+        channelName = cname
+    }
+
+	network, err := gw.GetNetwork(channelName)
+	if err != nil {
+		log.Fatalf("Failed to get network: %v", err)
+	}
+
+    chaincodeName := "loan"
+    if ccname := os.Getenv("CHAINCODE_NAME"); ccname != "" {
+        chaincodeName = ccname
+    }
+
 	contract := network.GetContract(chaincodeName)
 
 	// TODO: Call ApplyForLoan
@@ -161,3 +110,44 @@ func main() {
 
 	fmt.Printf("Outstanding Balance: %f\n", loan.Outstanding)
 }
+
+func populateWallet(wallet *gateway.Wallet) error {
+	credPath := filepath.Join(
+		"..",
+		"fabric-samples",
+		"test-network",
+		"organizations",
+		"peerOrganizations",
+		"org1.example.com",
+		"users",
+		"User1@org1.example.com",
+		"msp",
+	)
+
+	certPath := filepath.Join(credPath, "signcerts", "cert.pem")
+	// read the certificate pem
+	cert, err := os.ReadFile(filepath.Clean(certPath))
+	if err != nil {
+		return err
+	}
+
+	keyDir := filepath.Join(credPath, "keystore")
+	// there's a single file in this dir containing the private key
+	files, err := os.ReadDir(keyDir)
+	if err != nil {
+		return err
+	}
+	if len(files) != 1 {
+		return fmt.Errorf("keystore folder should have contain one file")
+	}
+	keyPath := filepath.Join(keyDir, files[0].Name())
+	key, err := os.ReadFile(filepath.Clean(keyPath))
+	if err != nil {
+		return err
+	}
+
+	identity := gateway.NewX509Identity("Org1MSP", string(cert), string(key))
+
+	return wallet.Put("appUser", identity)
+}
+
