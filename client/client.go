@@ -11,7 +11,19 @@ import (
 	"os"
 	"path"
 	"time"
+	"encoding/json"
 )
+
+type Loan struct {
+	LoanID        string    `json:"loanID"`
+	ApplicantName string    `json:"applicantName"`
+	LoanAmount    float64   `json:"loanAmount"`
+	TermMonths    int       `json:"termMonths"`
+	InterestRate  float64   `json:"interestRate"`
+	Outstanding   float64   `json:"outstanding"`
+	Status        string    `json:"status"`
+	Repayments    []float64 `json:"repayments"`
+}
 
 const (
 	channelName   = "mychannel"
@@ -121,7 +133,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to apply for loan: %v", err)
 	}
-	fmt.Println("Loan successfully applied.")
+	fmt.Println("Loan successfully applied")
 
 	_, err = contract.SubmitTransaction("ApproveLoan", "loan1", "Approved")
 	if err != nil {
@@ -140,5 +152,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get loan balance: %v", err)
 	}
-	fmt.Printf("Loan details: %s", string(result))
+
+	var loan Loan
+	err = json.Unmarshal(result, &loan)
+	if err != nil {
+		log.Fatalf("Failed to unmarshal loan: %v", err)
+	}
+
+	fmt.Printf("Outstanding Balance: %f\n", loan.Outstanding)
 }

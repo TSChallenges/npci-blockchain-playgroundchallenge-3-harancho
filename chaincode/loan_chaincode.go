@@ -65,7 +65,7 @@ func (c *LoanContract) ApplyForLoan(ctx contractapi.TransactionContextInterface,
 		LoanAmount:    loanAmount,
 		TermMonths:    termMonths,
 		InterestRate:  interestRate,
-		Outstanding:   50000 - loanAmount,
+		Outstanding:   loanAmount,
 		Status:        "Pending",
 	}
 
